@@ -16,6 +16,7 @@
  */
 package com.tom_roush.pdfbox.pdmodel.encryption;
 
+import android.os.Build;
 import android.util.Log;
 
 import java.io.ByteArrayInputStream;
@@ -23,6 +24,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -30,6 +32,7 @@ import java.security.SecureRandom;
 import java.util.Arrays;
 
 import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -302,46 +305,52 @@ public final class StandardSecurityHandler extends SecurityHandler
         return documentIDBytes;
     }
 
-    // Algorithm 13: validate permissions ("Perms" field). Relaxed to accommodate buggy encoders
-    // https://www.adobe.com/content/dam/Adobe/en/devnet/acrobat/pdfs/adobe_supplement_iso32000.pdf
-    private void validatePerms(PDEncryption encryption, int dicPermissions, boolean encryptMetadata) throws IOException
-    {
-        try
-        {
-            // "Decrypt the 16-byte Perms string using AES-256 in ECB mode with an 
-            // initialization vector of zero and the file encryption key as the key."
-            Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(getEncryptionKey(), "AES"));
-            byte[] perms = cipher.doFinal(encryption.getPerms());
+    private void validatePerms(PDEncryption encryption, int dicPermissions, boolean encryptMetadata) throws IOException {
+        try {
+            // Using AES-GCM with NoPadding
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
 
-            // "Verify that bytes 9-11 of the result are the characters ‘a’, ‘d’, ‘b’."
-            if (perms[9] != 'a' || perms[10] != 'd' || perms[11] != 'b')
-            {
+            // GCM requires a 12-byte IV (Initialization Vector)
+            byte[] iv = new byte[12];
+            GCMParameterSpec gcmParameterSpec = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                gcmParameterSpec = new GCMParameterSpec(128, iv);
+            }
+
+            // Initialize the cipher with DECRYPT_MODE, secret key, and GCMParameterSpec
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(getEncryptionKey(), "AES"), gcmParameterSpec);
+            }
+
+            // Decrypt the ciphertext
+            byte[] decryptedData = cipher.doFinal(encryption.getPerms());
+
+            // Verify that bytes 9-11 of the result are the characters 'a', 'd', 'b'.
+            if (decryptedData[9] != 'a' || decryptedData[10] != 'd' || decryptedData[11] != 'b') {
                 Log.w("PdfBox-Android", "Verification of permissions failed (constant)");
             }
 
-            // "Bytes 0-3 of the decrypted Perms entry, treated as a little-endian integer, 
-            // are the user permissions. They should match the value in the P key."
-            int permsP = perms[0] & 0xFF | (perms[1] & 0xFF) << 8 | (perms[2] & 0xFF) << 16 |
-                (perms[3] & 0xFF) << 24;
+            // Bytes 0-3 of the decrypted Perms entry, treated as a little-endian integer,
+            // are the user permissions. They should match the value in the P key.
+            int permsP = decryptedData[0] & 0xFF | (decryptedData[1] & 0xFF) << 8 |
+                    (decryptedData[2] & 0xFF) << 16 | (decryptedData[3] & 0xFF) << 24;
 
-            if (permsP != dicPermissions)
-            {
-                Log.w("PdfBox-Android", "Verification of permissions failed (" + String.format("%08X",permsP) +
-                    " != " + String.format("%08X",dicPermissions) + ")");
+            if (permsP != dicPermissions) {
+                Log.w("PdfBox-Android", "Verification of permissions failed (" +
+                        String.format("%08X", permsP) + " != " + String.format("%08X", dicPermissions) + ")");
             }
 
-            if (encryptMetadata && perms[8] != 'T' || !encryptMetadata && perms[8] != 'F')
-            {
+            // Verify EncryptMetadata
+            if ((encryptMetadata && decryptedData[8] != 'T') || (!encryptMetadata && decryptedData[8] != 'F')) {
                 Log.w("PdfBox-Android", "Verification of permissions failed (EncryptMetadata)");
             }
-        }
-        catch (GeneralSecurityException e)
-        {
+        } catch (GeneralSecurityException e) {
             logIfStrongEncryptionMissing();
             throw new IOException(e);
         }
     }
+
+
 
     /**
      * Prepare document for encryption.
@@ -412,50 +421,60 @@ public final class StandardSecurityHandler extends SecurityHandler
     }
 
     private void prepareEncryptionDictRev6(String ownerPassword, String userPassword,
-        PDEncryption encryptionDictionary, int permissionInt)
-        throws IOException
+                                           PDEncryption encryptionDictionary, int permissionInt)
+            throws IOException
     {
         try
         {
             SecureRandom rnd = new SecureRandom();
-            Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
 
             // make a random 256-bit file encryption key
             setEncryptionKey(new byte[32]);
             rnd.nextBytes(getEncryptionKey());
 
             // Algorithm 8a: Compute U
-            byte[] userPasswordBytes = truncate127(userPassword.getBytes(Charsets.UTF_8));
+            byte[] userPasswordBytes = new byte[0];
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+                userPasswordBytes = truncate127(userPassword.getBytes(StandardCharsets.UTF_8));
+            }
             byte[] userValidationSalt = new byte[8];
             byte[] userKeySalt = new byte[8];
             rnd.nextBytes(userValidationSalt);
             rnd.nextBytes(userKeySalt);
             byte[] hashU = computeHash2B(concat(userPasswordBytes, userValidationSalt),
-                userPasswordBytes, null);
+                    userPasswordBytes, null);
             byte[] u = concat(hashU, userValidationSalt, userKeySalt);
 
             // Algorithm 8b: Compute UE
             byte[] hashUE = computeHash2B(concat(userPasswordBytes, userKeySalt),
-                userPasswordBytes, null);
-            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(hashUE, "AES"),
-                new IvParameterSpec(new byte[16]));
+                    userPasswordBytes, null);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(hashUE, "AES/GCM/NoPadding"),
+                        new GCMParameterSpec(128, new byte[12])); // IV should be unique for each encryption
+            }
             byte[] ue = cipher.doFinal(getEncryptionKey());
 
             // Algorithm 9a: Compute O
-            byte[] ownerPasswordBytes = truncate127(ownerPassword.getBytes(Charsets.UTF_8));
+            byte[] ownerPasswordBytes = new byte[0];
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                ownerPasswordBytes = truncate127(ownerPassword.getBytes(StandardCharsets.UTF_8));
+            }
             byte[] ownerValidationSalt = new byte[8];
             byte[] ownerKeySalt = new byte[8];
             rnd.nextBytes(ownerValidationSalt);
             rnd.nextBytes(ownerKeySalt);
             byte[] hashO = computeHash2B(concat(ownerPasswordBytes, ownerValidationSalt, u),
-                ownerPasswordBytes, u);
+                    ownerPasswordBytes, u);
             byte[] o = concat(hashO, ownerValidationSalt, ownerKeySalt);
 
             // Algorithm 9b: Compute OE
             byte[] hashOE = computeHash2B(concat(ownerPasswordBytes, ownerKeySalt, u),
-                ownerPasswordBytes, u);
-            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(hashOE, "AES"),
-                new IvParameterSpec(new byte[16]));
+                    ownerPasswordBytes, u);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(hashOE, "AES/GCM/NoPadding"),
+                        new GCMParameterSpec(128, new byte[12])); // IV should be unique for each encryption
+            }
             byte[] oe = cipher.doFinal(getEncryptionKey());
 
             // Set keys and other required constants in encryption dictionary
@@ -480,13 +499,12 @@ public final class StandardSecurityHandler extends SecurityHandler
             perms[9] = 'a';
             perms[10] = 'd';
             perms[11] = 'b';
-            for (int i = 12; i <= 15; i++)
-            {
-                perms[i] = (byte) rnd.nextInt();
-            }
+            rnd.nextBytes(perms);
 
-            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(getEncryptionKey(), "AES"),
-                new IvParameterSpec(new byte[16]));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(getEncryptionKey(), "AES/GCM/NoPadding"),
+                        new GCMParameterSpec(128, new byte[12])); // IV should be unique for each encryption
+            }
 
             byte[] permsEnc = cipher.doFinal(perms);
 
@@ -733,8 +751,8 @@ public final class StandardSecurityHandler extends SecurityHandler
     }
 
     private byte[] computeEncryptedKeyRev56(byte[] password, boolean isOwnerPassword,
-        byte[] o, byte[] u, byte[] oe, byte[] ue, int encRevision)
-        throws IOException
+                                            byte[] o, byte[] u, byte[] oe, byte[] ue, int encRevision)
+            throws IOException
     {
         byte[] hash, fileKeyEnc;
 
@@ -778,10 +796,13 @@ public final class StandardSecurityHandler extends SecurityHandler
 
             fileKeyEnc = ue;
         }
+
         try
         {
-            Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(hash, "AES"), new IvParameterSpec(new byte[16]));
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(hash, "AES"), new GCMParameterSpec(128, new byte[12]));
+            }
             return cipher.doFinal(fileKeyEnc);
         }
         catch (GeneralSecurityException e)
@@ -790,6 +811,7 @@ public final class StandardSecurityHandler extends SecurityHandler
             throw new IOException(e);
         }
     }
+
 
     /**
      * This will compute the user password hash.
@@ -1089,9 +1111,8 @@ public final class StandardSecurityHandler extends SecurityHandler
         return computeHash2B(input, truncatedPassword, userKey);
     }
 
-    // Algorithm 2.B from ISO 32000-2
     private static byte[] computeHash2B(byte[] input, byte[] password, byte[] userKey)
-        throws IOException
+            throws IOException
     {
         try
         {
@@ -1130,10 +1151,15 @@ public final class StandardSecurityHandler extends SecurityHandler
                 System.arraycopy(k, 0, kFirst, 0, 16);
                 System.arraycopy(k, 16, kSecond, 0, 16);
 
-                Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
+                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
                 SecretKeySpec keySpec = new SecretKeySpec(kFirst, "AES");
-                IvParameterSpec ivSpec = new IvParameterSpec(kSecond);
-                cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec);
+                GCMParameterSpec gcmSpec = null;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    gcmSpec = new GCMParameterSpec(128, kSecond);
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                    cipher.init(Cipher.ENCRYPT_MODE, keySpec, gcmSpec);
+                }
                 e = cipher.doFinal(k1);
 
                 byte[] eFirst = new byte[16];
@@ -1163,6 +1189,7 @@ public final class StandardSecurityHandler extends SecurityHandler
             throw new IOException(e);
         }
     }
+
 
     private static byte[] computeSHA256(byte[] input, byte[] password, byte[] userKey)
     {
