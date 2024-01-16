@@ -257,7 +257,7 @@ public final class PublicKeySecurityHandler extends SecurityHandler
                 }
                 if (encryption.getVersion() == 4)
                 {
-                    mdResult = MessageDigests.getSHA1().digest(sha1Input);
+                    mdResult = MessageDigests.getSHA256().digest(sha1Input);
                 }
                 else
                 {
@@ -276,7 +276,7 @@ public final class PublicKeySecurityHandler extends SecurityHandler
             }
             else
             {
-                mdResult = MessageDigests.getSHA1().digest(sha1Input);
+                mdResult = MessageDigests.getSHA256().digest(sha1Input);
             }
 
             // we have the encryption key ...
@@ -393,7 +393,7 @@ public final class PublicKeySecurityHandler extends SecurityHandler
             {
                 case 4:
                     dictionary.setSubFilter(SUBFILTER5);
-                    mdResult = MessageDigests.getSHA1().digest(shaInput);
+                    mdResult = MessageDigests.getSHA256().digest(shaInput);
                     prepareEncryptionDictAES(dictionary, COSName.AESV2, recipientsFields);
                     break;
                 case 5:
@@ -403,7 +403,7 @@ public final class PublicKeySecurityHandler extends SecurityHandler
                     break;
                 default:
                     dictionary.setSubFilter(SUBFILTER4);
-                    mdResult = MessageDigests.getSHA1().digest(shaInput);
+                    mdResult = MessageDigests.getSHA256().digest(shaInput);
                     dictionary.setRecipients(recipientsFields);
                     break;
             }

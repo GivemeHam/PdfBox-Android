@@ -237,7 +237,7 @@ public abstract class SecurityHandler
         newKey[newKey.length - 2] = (byte) (genNumber & 0xff);
         newKey[newKey.length - 1] = (byte) (genNumber >> 8 & 0xff);
         // step 3
-        MessageDigest md = MessageDigests.getMD5();
+        MessageDigest md = MessageDigests.getSHA256();
         md.update(newKey);
         if (useAES)
         {

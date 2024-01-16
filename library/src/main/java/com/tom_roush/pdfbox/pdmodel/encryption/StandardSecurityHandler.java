@@ -527,7 +527,7 @@ public final class StandardSecurityHandler extends SecurityHandler
         //check if the document has an id yet.  If it does not then generate one
         if (idArray == null || idArray.size() < 2)
         {
-            MessageDigest md = MessageDigests.getMD5();
+            MessageDigest md = MessageDigests.getSHA256();
             BigInteger time = BigInteger.valueOf(System.currentTimeMillis());
             md.update(time.toByteArray());
             md.update(ownerPassword.getBytes(Charsets.ISO_8859_1));
@@ -715,7 +715,7 @@ public final class StandardSecurityHandler extends SecurityHandler
         //PDFReference 1.4 pg 78
         byte[] padded = truncateOrPad(password);
 
-        MessageDigest md = MessageDigests.getMD5();
+        MessageDigest md = MessageDigests.getSHA256();
         md.update(padded);
 
         md.update(o);
@@ -842,7 +842,7 @@ public final class StandardSecurityHandler extends SecurityHandler
         }
         else if( encRevision == 3 || encRevision == 4 )
         {
-            MessageDigest md = MessageDigests.getMD5();
+            MessageDigest md = MessageDigests.getSHA256();
             md.update( ENCRYPT_PADDING );
 
             md.update( id );
@@ -918,7 +918,7 @@ public final class StandardSecurityHandler extends SecurityHandler
     // steps (a) to (d) of "Algorithm 3: Computing the encryption dictionary’s O (owner password) value".
     private byte[] computeRC4key(byte[] ownerPassword, int encRevision, int length)
     {
-        MessageDigest md = MessageDigests.getMD5();
+        MessageDigest md = MessageDigests.getSHA256();
         byte[] digest = md.digest(truncateOrPad(ownerPassword));
         if (encRevision == 3 || encRevision == 4)
         {
