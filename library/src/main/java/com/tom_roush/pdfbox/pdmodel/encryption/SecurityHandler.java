@@ -17,6 +17,7 @@
 
 package com.tom_roush.pdfbox.pdmodel.encryption;
 
+import android.os.Build;
 import android.util.Log;
 
 import java.io.ByteArrayInputStream;
@@ -36,6 +37,8 @@ import java.util.Set;
 
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -373,13 +376,24 @@ public abstract class SecurityHandler
         }
     }
 
-    private Cipher createCipher(byte[] key, byte[] iv, boolean decrypt) throws GeneralSecurityException
-    {
-        @SuppressWarnings({"squid:S4432"}) // PKCS#5 padding is requested by PDF specification
-        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        Key keySpec = new SecretKeySpec(key, "AES");
-        IvParameterSpec ips = new IvParameterSpec(iv);
-        cipher.init(decrypt ? Cipher.DECRYPT_MODE : Cipher.ENCRYPT_MODE, keySpec, ips);
+    private Cipher createCipher(byte[] key, byte[] iv, boolean decrypt) throws GeneralSecurityException {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        SecretKey keySpec = new SecretKeySpec(key, "AES");
+        GCMParameterSpec gcmParameterSpec = null; // 128은 GCM 알고리즘에서 사용되는 태그 비트 길이입니다.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+            gcmParameterSpec = new GCMParameterSpec(128, iv);
+        }
+
+        if (decrypt) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmParameterSpec);
+            }
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                cipher.init(Cipher.ENCRYPT_MODE, keySpec, gcmParameterSpec);
+            }
+        }
+
         return cipher;
     }
 
